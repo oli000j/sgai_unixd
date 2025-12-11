@@ -1,0 +1,323 @@
+-- ============================================================================
+-- SCRIPT DE BASE DE DATOS - SGAI-UNI (Ingeniería de Sistemas - Plan 2018)
+-- Copia todo este contenido y ejecútalo en el SQL Editor de Supabase
+-- ============================================================================
+
+-- ============================================================================
+-- 1. CREACIÓN DE TABLAS (Estructura Base)
+-- ============================================================================
+
+-- PROFILES (Estudiantes)
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY,
+    full_name TEXT NOT NULL,
+    major TEXT NOT NULL,
+    current_cycle INTEGER NOT NULL,
+    avatar_url TEXT
+);
+
+-- COURSES (Cursos)
+CREATE TABLE IF NOT EXISTS public.courses (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    difficulty_level INTEGER, -- 1-5
+    credits INTEGER,
+    cycle INTEGER,
+    banner_url TEXT
+);
+
+-- ENROLLMENTS (Matrícula)
+CREATE TABLE IF NOT EXISTS public.enrollments (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID REFERENCES public.profiles(id),
+    course_id UUID REFERENCES public.courses(id),
+    is_active BOOLEAN DEFAULT true,
+    UNIQUE(user_id, course_id)
+);
+
+-- SYLLABUS TOPICS (Temas del sílabo)
+CREATE TABLE IF NOT EXISTS public.syllabus_topics (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    course_id UUID REFERENCES public.courses(id),
+    week_number INTEGER,
+    topic_name TEXT,
+    summary TEXT -- Nuevo campo para resumen IA
+);
+
+-- STUDY MATERIALS (Materiales de estudio)
+CREATE TABLE IF NOT EXISTS public.study_materials (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    topic_id UUID REFERENCES public.syllabus_topics(id),
+    type TEXT, -- 'TEORIA', 'EJERCICIO', 'EXAMEN'
+    title TEXT,
+    content_url TEXT,
+    difficulty_rating INTEGER
+);
+
+-- USER PROGRESS (Progreso del estudiante)
+CREATE TABLE IF NOT EXISTS public.user_progress (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID REFERENCES public.profiles(id),
+    topic_id UUID REFERENCES public.syllabus_topics(id),
+    status TEXT, -- 'PENDIENTE', 'EN_PROGRESO', 'DOMINADO'
+    last_review TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(user_id, topic_id)
+);
+
+-- ============================================================================
+-- 2. MIGRACIONES (Asegurar columnas en tablas existentes)
+-- ============================================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'avatar_url') THEN
+        ALTER TABLE public.profiles ADD COLUMN avatar_url TEXT;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'courses' AND column_name = 'banner_url') THEN
+        ALTER TABLE public.courses ADD COLUMN banner_url TEXT;
+    END IF;
+
+    -- MIGRACIÓN PARA RESUMEN IA
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'syllabus_topics' AND column_name = 'summary') THEN
+        ALTER TABLE public.syllabus_topics ADD COLUMN summary TEXT;
+    END IF;
+END $$;
+
+-- ============================================================================
+-- 3. POLÍTICAS DE SEGURIDAD (RLS - Permitir todo para Demo)
+-- ============================================================================
+
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.courses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.syllabus_topics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.study_materials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_progress ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public profiles access" ON public.profiles;
+CREATE POLICY "Public profiles access" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public courses access" ON public.courses;
+CREATE POLICY "Public courses access" ON public.courses FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public enrollments access" ON public.enrollments;
+CREATE POLICY "Public enrollments access" ON public.enrollments FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public topics access" ON public.syllabus_topics;
+CREATE POLICY "Public topics access" ON public.syllabus_topics FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public materials access" ON public.study_materials;
+CREATE POLICY "Public materials access" ON public.study_materials FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public progress access" ON public.user_progress;
+CREATE POLICY "Public progress access" ON public.user_progress FOR ALL USING (true) WITH CHECK (true);
+
+-- ============================================================================
+-- 4. DATOS DE PRUEBA (SEED DATA - PLAN 2018 SISTEMAS)
+-- ============================================================================
+
+-- 4.1. USUARIO DEMO
+INSERT INTO public.profiles (id, full_name, major, current_cycle, avatar_url)
+VALUES (
+    '00000000-0000-0000-0000-000000000001', 
+    'Estudiante Sistemas', 
+    'Ingeniería de Sistemas', 
+    4,
+    'https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=200&auto=format&fit=crop'
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- 4.2. INSERCIÓN DE CURSOS (CICLOS 1 - 10)
+DO $$
+DECLARE
+    u_id UUID := '00000000-0000-0000-0000-000000000001';
+    
+    -- URLs de banners genéricos
+    url_math TEXT := 'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?q=80&w=2070&auto=format&fit=crop';
+    url_phys TEXT := 'https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?q=80&w=2070&auto=format&fit=crop';
+    url_code TEXT := 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?q=80&w=2070&auto=format&fit=crop';
+    url_sys TEXT := 'https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2070&auto=format&fit=crop';
+    url_hum TEXT := 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?q=80&w=2070&auto=format&fit=crop';
+    url_db TEXT := 'https://images.unsplash.com/photo-1544383835-bda2bc66a55d?q=80&w=2021&auto=format&fit=crop';
+    url_mgmt TEXT := 'https://images.unsplash.com/photo-1552664730-d307ca884978?q=80&w=2070&auto=format&fit=crop';
+
+BEGIN
+    -- CICLO 1
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('FB101', 'Geometría Analítica', 3, 3, 1, url_math),
+    ('BMA01', 'Cálculo Diferencial', 4, 5, 1, url_math),
+    ('BQU01', 'Química I', 3, 5, 1, 'https://images.unsplash.com/photo-1532094349884-543bc11b234d?q=80&w=2070'),
+    ('BIC01', 'Introducción a la Computación', 2, 2, 1, url_code),
+    ('BRC01', 'Redacción y Comunicación', 1, 2, 1, url_hum),
+    ('SI101', 'Introducción a la Ing. de Sistemas', 2, 3, 1, url_sys)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 2
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('BMA03', 'Álgebra Lineal', 3, 4, 2, url_math),
+    ('BMA02', 'Cálculo Integral', 4, 5, 2, url_math),
+    ('BEF01', 'Ética y Filosofía Política', 1, 2, 2, url_hum),
+    ('SI201', 'Psicología Sistémica', 2, 3, 2, url_hum),
+    ('SI203', 'Teoría y Ciencia de Sistemas', 3, 3, 2, url_sys),
+    ('SI207', 'Sistemas Biológicos y Ecológicos', 2, 2, 2, 'https://images.unsplash.com/photo-1532094349884-543bc11b234d'),
+    ('SI205', 'Algoritmia y Estructura de Datos', 4, 3, 2, url_code)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 3
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('FB301', 'Matemática Discreta', 3, 3, 3, url_math),
+    ('FB303', 'Cálculo Multivariable', 5, 5, 3, url_math),
+    ('BFI01', 'Física I', 4, 5, 3, url_phys),
+    ('HU301', 'Metodología de la Investigación', 2, 3, 3, url_hum),
+    ('FB305', 'Estadística y Probabilidades', 3, 3, 3, url_math),
+    ('SI301', 'Teoría y Ciencia de Sistemas Aplicados', 3, 2, 3, url_sys),
+    ('SI302', 'Programación Orientada a Objetos', 4, 4, 3, url_code)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 4
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('FB402', 'Cálculo Numérico', 3, 3, 4, url_code),
+    ('FB403', 'Ecuaciones Diferenciales', 5, 5, 4, url_math),
+    ('FB401', 'Física II', 4, 5, 4, url_phys),
+    ('FB405', 'Estadística Aplicada', 3, 3, 4, url_math),
+    ('HU102', 'Desarrollo Personal', 1, 3, 4, url_hum),
+    ('SI403', 'Metodología de los Sistemas Blandos', 3, 3, 4, url_sys),
+    ('SI405', 'Modelado Conceptual de Datos', 3, 3, 4, url_db)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 5
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('FB501', 'Matemática Aplicada', 4, 3, 5, url_math),
+    ('SI505', 'Diseño de Base de Datos', 4, 3, 5, url_db),
+    ('BRN01', 'Realidad Nacional', 2, 3, 5, url_hum),
+    ('SI501', 'Investigación de Operaciones I', 4, 3, 5, url_math),
+    ('BEG01', 'Economía General', 2, 3, 5, url_mgmt),
+    ('GE501', 'Teoría Organizacional', 2, 3, 5, url_mgmt),
+    ('SI503', 'Ingeniería de Procesos', 3, 3, 5, url_sys)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 6
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('GE605', 'Sistema y Gestión Financiera', 3, 3, 6, url_mgmt),
+    ('SI603', 'Modelado de Procesos', 3, 3, 6, url_sys),
+    ('SI601', 'Investigación de Operaciones II', 4, 3, 6, url_math),
+    ('SI602', 'Dinámica de Sistemas', 4, 3, 6, url_sys),
+    ('SI604', 'Análisis y Diseño de Sistemas', 5, 5, 6, url_code),
+    ('SI605', 'Arquitectura Empresarial', 3, 3, 6, url_mgmt),
+    ('SI607', 'Arquitectura Computacional y Redes', 4, 3, 6, url_code)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 7
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('GE709', 'Sistemas de Calidad', 2, 3, 7, url_mgmt),
+    ('GE703', 'Sistemas Integrados Empresariales', 3, 3, 7, url_mgmt),
+    ('SI701', 'Modelado Sistémico y Simulación', 4, 3, 7, url_code),
+    ('SI702', 'Taller de Dinámica de Sistemas', 3, 3, 7, url_sys),
+    ('SI704', 'Gestión de la Ingeniería de Sistemas', 3, 3, 7, url_mgmt),
+    ('SI705', 'Estándares de la Ing. de Sistemas', 2, 2, 7, url_sys),
+    ('SI707', 'Ingeniería de Software', 4, 3, 7, url_code)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 8
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('SI801', 'Modelo del Sistema Viable', 4, 3, 8, url_sys),
+    ('GE801', 'Planeamiento y Gestión Estratégica', 3, 3, 8, url_mgmt),
+    ('GE803', 'Sistemas Analíticos', 4, 3, 8, url_db),
+    ('SI805', 'Integración de Sistemas', 3, 3, 8, url_code),
+    ('SI807', 'Sistemas de Inteligencia de Negocio', 4, 3, 8, url_db),
+    ('SI806', 'Desarrollo Adaptativo e Integrado del SW', 4, 3, 8, url_code)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 9
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('SI901', 'Proyecto de Tesis en Ing. Sistemas I', 5, 3, 9, url_hum),
+    ('SI902', 'Ingeniería de Sistemas de Servicio', 3, 3, 9, url_sys),
+    ('SI903', 'Implementación de Sistemas', 3, 2, 9, url_code),
+    ('SI904', 'Seguridad de Sistemas', 4, 3, 9, url_code),
+    ('GE902', 'Diseño y Evaluación de Proyectos', 4, 3, 9, url_mgmt)
+    ON CONFLICT DO NOTHING;
+
+    -- CICLO 10
+    INSERT INTO public.courses (code, name, difficulty_level, credits, cycle, banner_url) VALUES
+    ('SI035', 'Proyecto de Tesis en Ing. Sistemas II', 5, 3, 10, url_hum),
+    ('SI055', 'Gestión de Proyectos', 3, 3, 10, url_mgmt),
+    ('SI075', 'Auditoría de Sistemas', 3, 3, 10, url_sys),
+    ('SI085', 'Aplicación de Negocios Electrónicos', 3, 3, 10, url_code),
+    ('SI095', 'Ingeniería Empresarial', 3, 3, 10, url_mgmt)
+    ON CONFLICT DO NOTHING;
+
+    -- MATRICULAR USUARIO (Ejemplo con algunos cursos de Ciclo 4)
+    INSERT INTO public.enrollments (user_id, course_id)
+    SELECT u_id, id FROM public.courses WHERE code IN ('FB403', 'SI405', 'FB401')
+    ON CONFLICT DO NOTHING;
+
+END $$;
+
+-- ============================================================================
+-- 5. NUEVOS CAMBIOS: AUTENTICACIÓN Y ROLES
+-- ============================================================================
+
+DO $$
+BEGIN
+    -- Añadir columna de correo
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'email') THEN
+        ALTER TABLE public.profiles ADD COLUMN email TEXT UNIQUE;
+    END IF;
+
+    -- Añadir columna de rol (student/admin)
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'role') THEN
+        ALTER TABLE public.profiles ADD COLUMN role TEXT DEFAULT 'student';
+    END IF;
+
+    -- NUEVO: Restricción para correos UNI (Opcional pero recomendado para "correo UNI")
+    -- NOTA: La contraseña NO va aquí, se guarda en auth.users
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'check_uni_email') THEN
+        ALTER TABLE public.profiles 
+        ADD CONSTRAINT check_uni_email 
+        CHECK (email LIKE '%@uni.edu.pe' OR email LIKE '%@uni.pe');
+    END IF;
+
+END $$;
+
+-- Actualizar el usuario demo
+UPDATE public.profiles 
+SET role = 'admin', email = 'demo@uni.edu.pe' 
+WHERE id = '00000000-0000-0000-0000-000000000001';
+
+-- ============================================================================
+-- 6. CARGA DE SÍLABO: QUÍMICA I (BQU01) - Según PDF OCR
+-- ============================================================================
+
+DO $$
+DECLARE
+    target_course_id UUID;
+BEGIN
+    -- 1. Obtener el ID del curso Química I (BQU01) creado anteriormente
+    SELECT id INTO target_course_id FROM public.courses WHERE code = 'BQU01' LIMIT 1;
+
+    IF target_course_id IS NOT NULL THEN
+        -- 2. Limpiar temas existentes de este curso para evitar duplicados si se corre varias veces
+        DELETE FROM public.syllabus_topics WHERE course_id = target_course_id;
+
+        -- 3. Insertar Semanas 1 - 16
+        INSERT INTO public.syllabus_topics (course_id, week_number, topic_name) VALUES
+        (target_course_id, 1, 'Conceptos Básicos de la Química (Materia, Sustancias, SI)'),
+        (target_course_id, 2, 'Átomos, Moléculas y Iones (Tabla periódica, Nomenclatura)'),
+        (target_course_id, 3, 'Masas, Moles y Ecuaciones Químicas (Estequiometría básica)'),
+        (target_course_id, 4, 'Reacciones Químicas y Estequiometría (Reactivo limitante)'),
+        (target_course_id, 5, 'Reacciones en Disolución Acuosa (Redox, Ácido-Base)'),
+        (target_course_id, 6, 'Gases (Leyes, Gas ideal, Dalton)'),
+        (target_course_id, 7, 'Energía, Termoquímica y Calorimetría'),
+        (target_course_id, 8, 'Examen Parcial'),
+        (target_course_id, 9, 'Estructura Electrónica del Átomo (Cuántica)'),
+        (target_course_id, 10, 'Propiedades Periódicas (Radio, Ionización, Electronegatividad)'),
+        (target_course_id, 11, 'Enlace Químico Básico (Iónico, Covalente, Lewis)'),
+        (target_course_id, 12, 'Geometría Molecular y Teoría VSEPR'),
+        (target_course_id, 13, 'Interacciones Intermoleculares, Líquidos y Sólidos'),
+        (target_course_id, 14, 'Disoluciones y sus Propiedades (Concentraciones)'),
+        (target_course_id, 15, 'Repaso Integrador (Problemas globales)'),
+        (target_course_id, 16, 'Examen Final');
+    END IF;
+END $$;
